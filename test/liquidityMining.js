@@ -583,6 +583,10 @@ describe('LiquidityMining', () => {
       await expect(liquidityMining.updateDebtors([user1Address])).to.be.revertedWith('failed to get account liquidity from comptroller');
       expect(await liquidityMining.debtors(user1Address)).to.eq(true); // value unchanged
     });
+
+    it('fails to update debtors for non-admin', async () => {
+      await expect(liquidityMining.connect(user2).updateDebtors([user1Address])).to.be.revertedWith('Ownable: caller is not the owner');
+    });
   });
 
   describe('setRewardsReceiver', async () => {

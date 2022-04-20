@@ -221,11 +221,13 @@ contract LiquidityMining is Initializable, UUPSUpgradeable, OwnableUpgradeable, 
         return userMarkets;
     }
 
+    /* Admin functions */
+
     /**
      * @notice Update accounts to be debtors or not. Debtors couldn't claim rewards until their bad debts are repaid.
      * @param accounts The list of accounts to be updated
      */
-    function updateDebtors(address[] memory accounts) external {
+    function updateDebtors(address[] memory accounts) external onlyOwner {
         for (uint i = 0; i < accounts.length; i++) {
             address account = accounts[i];
             (uint err, , uint shortfall) = ComptrollerInterface(comptroller).getAccountLiquidity(account);
@@ -240,8 +242,6 @@ contract LiquidityMining is Initializable, UUPSUpgradeable, OwnableUpgradeable, 
             }
         }
     }
-
-    /* Admin functions */
 
     /**
      * @notice Set the reward delegate receiver for an account
