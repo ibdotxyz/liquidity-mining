@@ -17,7 +17,6 @@ contract LiquidityMining is Initializable, UUPSUpgradeable, OwnableUpgradeable, 
     using SafeERC20 for IERC20;
 
     uint internal constant initialIndex = 1e18;
-    address public constant ethAddress = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     /**
      * @notice Emitted when a supplier's reward supply index is updated
@@ -127,11 +126,6 @@ contract LiquidityMining is Initializable, UUPSUpgradeable, OwnableUpgradeable, 
         transferOwnership(_admin);
     }
 
-    /**
-     * @notice Contract might receive ETH as one of the LM rewards.
-     */
-    receive() external payable {}
-
     /* ========== VIEW FUNCTIONS ========== */
 
     /**
@@ -151,46 +145,16 @@ contract LiquidityMining is Initializable, UUPSUpgradeable, OwnableUpgradeable, 
     }
 
     /**
-     * @notice Get user reward token balance.
-     * @param rewardToken The reward token
-     * @param account The user address
-     * @return The user balance
-     */
-    function getRewardTokenUserBalance(address rewardToken, address account) public view returns (uint) {
-        if (rewardToken == ethAddress) {
-            return account.balance;
-        } else {
-            return IERC20Metadata(rewardToken).balanceOf(account);
-        }
-    }
-
-    /**
      * @notice Get reward token info.
      * @param rewardToken The reward token address
      * @return The reward token info
      */
     function getRewardTokenInfo(address rewardToken) public view returns (RewardTokenInfo memory) {
-        if (rewardToken == ethAddress) {
-            string memory rewardTokenSymbol = "ETH";
-            if (block.chainid == 56) {
-                rewardTokenSymbol = "BNB"; // bsc
-            } else if (block.chainid == 137) {
-                rewardTokenSymbol = "MATIC"; // polygon
-            } else if (block.chainid == 250) {
-                rewardTokenSymbol = "FTM"; // fantom
-            }
-            return RewardTokenInfo({
-                rewardTokenAddress: ethAddress,
-                rewardTokenSymbol: rewardTokenSymbol,
-                rewardTokenDecimals: uint8(18)
-            });
-        } else {
-            return RewardTokenInfo({
-                rewardTokenAddress: rewardToken,
-                rewardTokenSymbol: IERC20Metadata(rewardToken).symbol(),
-                rewardTokenDecimals: IERC20Metadata(rewardToken).decimals()
-            });
-        }
+        return RewardTokenInfo({
+            rewardTokenAddress: rewardToken,
+            rewardTokenSymbol: IERC20Metadata(rewardToken).symbol(),
+            rewardTokenDecimals: IERC20Metadata(rewardToken).decimals()
+        });
     }
 
     /**
@@ -201,12 +165,10 @@ contract LiquidityMining is Initializable, UUPSUpgradeable, OwnableUpgradeable, 
     function getMarketRewardSpeeds(address cToken) public view returns (MarketRewardSpeed memory) {
         RewardSpeedInfo[] memory rewardSpeeds = new RewardSpeedInfo[](rewardTokens.length);
         for (uint i = 0; i < rewardTokens.length; i++) {
-            RewardSpeed memory supplySpeed = rewardSupplySpeeds[rewardTokens[i]][cToken];
-            RewardSpeed memory borrowSpeed = rewardBorrowSpeeds[rewardTokens[i]][cToken];
             rewardSpeeds[i] = RewardSpeedInfo({
                 rewardToken: getRewardTokenInfo(rewardTokens[i]),
-                supplySpeed: supplySpeed,
-                borrowSpeed: borrowSpeed
+                supplySpeed: rewardSupplySpeeds[rewardTokens[i]][cToken],
+                borrowSpeed: rewardBorrowSpeeds[rewardTokens[i]][cToken]
             });
         }
         return MarketRewardSpeed({
@@ -346,13 +308,13 @@ contract LiquidityMining is Initializable, UUPSUpgradeable, OwnableUpgradeable, 
         RewardAvailable[] memory rewardAvailables = new RewardAvailable[](rewardTokens.length);
 
         for (uint i = 0; i < rewardTokens.length; i++) {
-            beforeBalances[i] = getRewardTokenUserBalance(rewardTokens[i], account);
+            beforeBalances[i] = IERC20(rewardTokens[i]).balanceOf(account);
         }
 
         claimAllRewards(account);
 
         for (uint i = 0; i < rewardTokens.length; i++) {
-            uint newBalance = getRewardTokenUserBalance(rewardTokens[i], account);
+            uint newBalance = IERC20(rewardTokens[i]).balanceOf(account);
             rewardAvailables[i] = RewardAvailable({
                 rewardToken: getRewardTokenInfo(rewardTokens[i]),
                 amount: newBalance - beforeBalances[i]
@@ -398,7 +360,7 @@ contract LiquidityMining is Initializable, UUPSUpgradeable, OwnableUpgradeable, 
      * @notice Add new reward token. Revert if the reward token has been added
      * @param rewardToken The new reward token
      */
-    function _addRewardToken(address rewardToken) external onlyOwner {
+    function addRewardToken(address rewardToken) external onlyOwner {
         require(!rewardTokensMap[rewardToken], "reward token has been added");
         rewardTokensMap[rewardToken] = true;
         rewardTokens.push(rewardToken);
@@ -412,7 +374,7 @@ contract LiquidityMining is Initializable, UUPSUpgradeable, OwnableUpgradeable, 
      * @param starts The list of start timestamps
      * @param ends The list of end timestamps
      */
-    function _setRewardSupplySpeeds(address rewardToken, address[] memory cTokens, uint[] memory speeds, uint[] memory starts, uint[] memory ends) external onlyOwner {
+    function setRewardSupplySpeeds(address rewardToken, address[] memory cTokens, uint[] memory speeds, uint[] memory starts, uint[] memory ends) external onlyOwner {
         _setRewardSpeeds(rewardToken, cTokens, speeds, starts, ends, true);
     }
 
@@ -424,7 +386,7 @@ contract LiquidityMining is Initializable, UUPSUpgradeable, OwnableUpgradeable, 
      * @param starts The list of start timestamps
      * @param ends The list of end timestamps
      */
-    function _setRewardBorrowSpeeds(address rewardToken, address[] memory cTokens, uint[] memory speeds, uint[] memory starts, uint[] memory ends) external onlyOwner {
+    function setRewardBorrowSpeeds(address rewardToken, address[] memory cTokens, uint[] memory speeds, uint[] memory starts, uint[] memory ends) external onlyOwner {
         _setRewardSpeeds(rewardToken, cTokens, speeds, starts, ends, false);
     }
 
@@ -624,7 +586,7 @@ contract LiquidityMining is Initializable, UUPSUpgradeable, OwnableUpgradeable, 
      * @return The amount of rewards which was NOT transferred to the user
      */
     function transferReward(address rewardToken, address user, uint amount) internal returns (uint) {
-        uint remain = rewardToken == ethAddress ? address(this).balance : IERC20(rewardToken).balanceOf(address(this));
+        uint remain = IERC20(rewardToken).balanceOf(address(this));
         if (amount > 0 && amount <= remain && !debtors[user]) {
             address receiver = rewardReceivers[user];
             if (receiver == address(0)) {
@@ -632,11 +594,7 @@ contract LiquidityMining is Initializable, UUPSUpgradeable, OwnableUpgradeable, 
                 receiver = user;
             }
 
-            if (rewardToken == ethAddress) {
-                payable(receiver).transfer(amount);
-            } else {
-                IERC20(rewardToken).safeTransfer(receiver, amount);
-            }
+            IERC20(rewardToken).safeTransfer(receiver, amount);
             emit TransferReward(rewardToken, user, receiver, amount);
             return 0;
         }
