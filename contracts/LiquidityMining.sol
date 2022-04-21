@@ -3,6 +3,7 @@
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
@@ -88,6 +89,34 @@ contract LiquidityMining is Initializable, UUPSUpgradeable, OwnableUpgradeable, 
         address indexed receiver
     );
 
+    struct UserMarkets {
+        address market;
+        bool supply;
+        bool borrow;
+    }
+
+    struct RewardTokenInfo {
+        address rewardTokenAddress;
+        string rewardTokenSymbol;
+        uint8 rewardTokenDecimals;
+    }
+
+    struct RewardAvailable {
+        RewardTokenInfo rewardToken;
+        uint amount;
+    }
+
+    struct RewardSpeedInfo {
+        RewardTokenInfo rewardToken;
+        RewardSpeed supplySpeed;
+        RewardSpeed borrowSpeed;
+    }
+
+    struct MarketRewardSpeed {
+        address cToken;
+        RewardSpeedInfo[] rewardSpeeds;
+    }
+
     /**
      * @notice Initialize the contract with admin and comptroller
      */
@@ -103,7 +132,116 @@ contract LiquidityMining is Initializable, UUPSUpgradeable, OwnableUpgradeable, 
      */
     receive() external payable {}
 
-    /* User functions */
+    /* ========== VIEW FUNCTIONS ========== */
+
+    /**
+     * @notice Return the current block timestamp.
+     * @return The current block timestamp
+     */
+    function getBlockTimestamp() public virtual view returns (uint) {
+        return block.timestamp;
+    }
+
+    /**
+     * @notice Return the reward token list.
+     * @return The list of reward token addresses
+     */
+    function getRewardTokenList() external view returns (address[] memory) {
+        return rewardTokens;
+    }
+
+    /**
+     * @notice Get user reward token balance.
+     * @param rewardToken The reward token
+     * @param account The user address
+     * @return The user balance
+     */
+    function getRewardTokenUserBalance(address rewardToken, address account) public view returns (uint) {
+        if (rewardToken == ethAddress) {
+            return account.balance;
+        } else {
+            return IERC20Metadata(rewardToken).balanceOf(account);
+        }
+    }
+
+    /**
+     * @notice Get reward token info.
+     * @param rewardToken The reward token address
+     * @return The reward token info
+     */
+    function getRewardTokenInfo(address rewardToken) public view returns (RewardTokenInfo memory) {
+        if (rewardToken == ethAddress) {
+            string memory rewardTokenSymbol = "ETH";
+            if (block.chainid == 56) {
+                rewardTokenSymbol = "BNB"; // bsc
+            } else if (block.chainid == 137) {
+                rewardTokenSymbol = "MATIC"; // polygon
+            } else if (block.chainid == 250) {
+                rewardTokenSymbol = "FTM"; // fantom
+            }
+            return RewardTokenInfo({
+                rewardTokenAddress: ethAddress,
+                rewardTokenSymbol: rewardTokenSymbol,
+                rewardTokenDecimals: uint8(18)
+            });
+        } else {
+            return RewardTokenInfo({
+                rewardTokenAddress: rewardToken,
+                rewardTokenSymbol: IERC20Metadata(rewardToken).symbol(),
+                rewardTokenDecimals: IERC20Metadata(rewardToken).decimals()
+            });
+        }
+    }
+
+    /**
+     * @notice Get reward speed info by market.
+     * @param cToken The market address
+     * @return The market reward speed info
+     */
+    function getMarketRewardSpeeds(address cToken) public view returns (MarketRewardSpeed memory) {
+        RewardSpeedInfo[] memory rewardSpeeds = new RewardSpeedInfo[](rewardTokens.length);
+        for (uint i = 0; i < rewardTokens.length; i++) {
+            RewardSpeed memory supplySpeed = rewardSupplySpeeds[rewardTokens[i]][cToken];
+            RewardSpeed memory borrowSpeed = rewardBorrowSpeeds[rewardTokens[i]][cToken];
+            rewardSpeeds[i] = RewardSpeedInfo({
+                rewardToken: getRewardTokenInfo(rewardTokens[i]),
+                supplySpeed: supplySpeed,
+                borrowSpeed: borrowSpeed
+            });
+        }
+        return MarketRewardSpeed({
+            cToken: cToken,
+            rewardSpeeds: rewardSpeeds
+        });
+    }
+
+    /**
+     * @notice Get all market reward speed info.
+     * @return The list of reward speed info
+     */
+    function getAllMarketRewardSpeeds() public view returns (MarketRewardSpeed[] memory) {
+        address[] memory allMarkets = ComptrollerInterface(comptroller).getAllMarkets();
+        MarketRewardSpeed[] memory allRewardSpeeds = new MarketRewardSpeed[](allMarkets.length);
+        for (uint i = 0; i < allMarkets.length; i++) {
+            allRewardSpeeds[i] = getMarketRewardSpeeds(allMarkets[i]);
+        }
+        return allRewardSpeeds;
+    }
+
+    /* ========== MUTATIVE FUNCTIONS ========== */
+
+    /**
+     * @notice Check if the msg.sender is the account or the account delegate rewards receiver.
+     * @param account The account address
+     */
+    modifier onlyAccount(address account) {
+        if (rewardReceivers[account] != address(0)) {
+            require(msg.sender == rewardReceivers[account], "unauthorized");
+        } else {
+            require(msg.sender == account, "unauthorized");
+        }
+        _;
+    }
 
     /**
      * @notice Accrue rewards to the market by updating the supply index and calculate rewards accrued by suppliers
@@ -126,91 +264,67 @@ contract LiquidityMining is Initializable, UUPSUpgradeable, OwnableUpgradeable, 
     }
 
     /**
-     * @notice Return the current block timestamp.
-     * @return The current block timestamp
-     */
-    function getBlockTimestamp() public virtual view returns (uint) {
-        return block.timestamp;
-    }
-
-    /**
-     * @notice Return the reward token list.
-     * @return The list of reward token addresses
-     */
-    function getRewardTokenList() external view returns (address[] memory) {
-        return rewardTokens;
-    }
-
-    /**
      * @notice Claim all the rewards accrued by holder in all markets
-     * @param holder The address to claim rewards for
+     * @param account The account address
      */
-    function claimAllRewards(address holder) public {
-        address[] memory holders = new address[](1);
-        holders[0] = holder;
+    function claimAllRewards(address account) public onlyAccount(account) {
         address[] memory allMarkets = ComptrollerInterface(comptroller).getAllMarkets();
-        return claimRewards(holders, allMarkets, rewardTokens, true, true);
+        return claimRewards(account, allMarkets, rewardTokens, true, true);
     }
 
     /**
-     * @notice Claim the rewards accrued by the holders
-     * @param holders The addresses to claim rewards for
+     * @notice Claim the rewards accrued by the account
+     * @param account The account address
      * @param cTokens The list of markets to claim rewards in
      * @param rewards The list of reward tokens to claim
      * @param borrowers Whether or not to claim rewards earned by borrowing
      * @param suppliers Whether or not to claim rewards earned by supplying
      */
-    function claimRewards(address[] memory holders, address[] memory cTokens, address[] memory rewards, bool borrowers, bool suppliers) public {
+    function claimRewards(address account, address[] memory cTokens, address[] memory rewards, bool borrowers, bool suppliers) public onlyAccount(account) {
         for (uint i = 0; i < cTokens.length; i++) {
             address cToken = cTokens[i];
 
+            address[] memory accounts = new address[](1);
+            accounts[0] = account;
+
             // Same reward generated from multiple markets could aggregate and distribute once later for gas consumption.
             if (borrowers) {
-                updateBorrowIndexInternal(rewards, cToken, holders, false);
+                updateBorrowIndexInternal(rewards, cToken, accounts, false);
             }
             if (suppliers) {
-                updateSupplyIndexInternal(rewards, cToken, holders, false);
+                updateSupplyIndexInternal(rewards, cToken, accounts, false);
             }
         }
 
         // Distribute the rewards.
         for (uint i = 0; i < rewards.length; i++) {
-            for (uint j = 0; j < holders.length; j++) {
-                address rewardToken = rewards[i];
-                address holder = holders[j];
-                require(!debtors[holder], "debtor is not allowed to claim rewards");
+            address rewardToken = rewards[i];
+            require(!debtors[account], "debtor is not allowed to claim rewards");
 
-                rewardAccrued[rewardToken][holder] = transferReward(rewardToken, holder, rewardAccrued[rewardToken][holder]);
-            }
+            rewardAccrued[rewardToken][account] = transferReward(rewardToken, account, rewardAccrued[rewardToken][account]);
         }
     }
 
-    struct UserMarkets {
-        address market;
-        bool supply;
-        bool borrow;
-    }
-
     /**
-     * @notice Claim the rewards accrued by one holder and a specifc reward token
+     * @notice Claim the rewards accrued by one account and a specifc reward token
      * @dev This function is not efficient for claiming user rewards but it's useful to get the user related markets by using a staticcall.
-     * @param holder The user address
+     * @param account The account address
      * @param reward The reward token address
      * @return The list of user related markets
      */
-    function claimSingleReward(address holder, address reward) public returns (UserMarkets[] memory) {
+    function claimSingleReward(address account, address reward) public onlyAccount(account) returns (UserMarkets[] memory) {
         require(rewardTokensMap[reward], "reward token not support");
-        require(!debtors[holder], "debtor is not allowed to claim rewards");
+        require(!debtors[account], "debtor is not allowed to claim rewards");
 
         address[] memory allMarkets = ComptrollerInterface(comptroller).getAllMarkets();
         UserMarkets[] memory userMarkets = new UserMarkets[](allMarkets.length);
         for (uint i = 0; i < allMarkets.length; i++) {
             uint marketBorrowIndex = CTokenInterface(allMarkets[i]).borrowIndex();
             updateGlobalBorrowIndex(reward, allMarkets[i], marketBorrowIndex);
-            bool affectBorrow = updateUserBorrowIndex(reward, allMarkets[i], holder, marketBorrowIndex, true);
+            bool affectBorrow = updateUserBorrowIndex(reward, allMarkets[i], account, marketBorrowIndex, true);
 
             updateGlobalSupplyIndex(reward, allMarkets[i]);
-            bool affectSupply = updateUserSupplyIndex(reward, allMarkets[i], holder, true);
+            bool affectSupply = updateUserSupplyIndex(reward, allMarkets[i], account, true);
 
             userMarkets[i] = UserMarkets({
                 market: allMarkets[i],
@@ -221,7 +335,33 @@ contract LiquidityMining is Initializable, UUPSUpgradeable, OwnableUpgradeable, 
         return userMarkets;
     }
 
-    /* Admin functions */
+    /**
+     * @notice Get user all available rewards.
+     * @dev This function is normally used by staticcall.
+     * @param account The user address
+     * @return The list of user available rewards
+     */
+    function getRewardsAvailable(address account) public onlyAccount(account) returns (RewardAvailable[] memory) {
+        uint[] memory beforeBalances = new uint[](rewardTokens.length);
+        RewardAvailable[] memory rewardAvailables = new RewardAvailable[](rewardTokens.length);
+
+        for (uint i = 0; i < rewardTokens.length; i++) {
+            beforeBalances[i] = getRewardTokenUserBalance(rewardTokens[i], account);
+        }
+
+        claimAllRewards(account);
+
+        for (uint i = 0; i < rewardTokens.length; i++) {
+            uint newBalance = getRewardTokenUserBalance(rewardTokens[i], account);
+            rewardAvailables[i] = RewardAvailable({
+                rewardToken: getRewardTokenInfo(rewardTokens[i]),
+                amount: newBalance - beforeBalances[i]
+            });
+        }
+        return rewardAvailables;
+    }
+
+    /* ========== ADMIN FUNCTIONS ========== */
 
     /**
      * @notice Update accounts to be debtors or not. Debtors couldn't claim rewards until their bad debts are repaid.
@@ -288,7 +428,7 @@ contract LiquidityMining is Initializable, UUPSUpgradeable, OwnableUpgradeable, 
         _setRewardSpeeds(rewardToken, cTokens, speeds, starts, ends, false);
     }
 
-    /* Internal functions */
+    /* ========== INTERNAL FUNCTIONS ========== */
 
     /**
      * @dev _authorizeUpgrade is used by UUPSUpgradeable to determine if it's allowed to upgrade a proxy implementation.
