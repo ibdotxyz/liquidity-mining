@@ -36,7 +36,7 @@ describe('LiquidityMiningProxy', () => {
   });
 
   it('changes implementation', async () => {
-    await liquidityMining._addRewardToken(rewardToken.address);
+    await liquidityMining.addRewardToken(rewardToken.address);
     expect(await liquidityMining.rewardTokensMap(rewardToken.address)).to.eq(true);
 
     const liquidityMiningFactory = await ethers.getContractFactory('LiquidityMiningExtension');
