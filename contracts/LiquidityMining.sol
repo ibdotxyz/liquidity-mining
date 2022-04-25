@@ -243,6 +243,7 @@ contract LiquidityMining is Initializable, UUPSUpgradeable, OwnableUpgradeable, 
      * @param suppliers Whether or not to claim rewards earned by supplying
      */
     function claimRewards(address account, address[] memory cTokens, address[] memory rewards, bool borrowers, bool suppliers) public onlyAccount(account) {
+        require(!debtors[account], "debtor is not allowed to claim rewards");
         for (uint i = 0; i < cTokens.length; i++) {
             address cToken = cTokens[i];
 
@@ -260,10 +261,7 @@ contract LiquidityMining is Initializable, UUPSUpgradeable, OwnableUpgradeable, 
 
         // Distribute the rewards.
         for (uint i = 0; i < rewards.length; i++) {
-            address rewardToken = rewards[i];
-            require(!debtors[account], "debtor is not allowed to claim rewards");
-
-            rewardAccrued[rewardToken][account] = transferReward(rewardToken, account, rewardAccrued[rewardToken][account]);
+            rewardAccrued[rewards[i]][account] = transferReward(rewards[i], account, rewardAccrued[rewards[i]][account]);
         }
     }
 
