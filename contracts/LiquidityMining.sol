@@ -179,13 +179,13 @@ contract LiquidityMining is Initializable, UUPSUpgradeable, OwnableUpgradeable, 
 
     /**
      * @notice Get all market reward speed info.
+     * @param cTokens The market addresses
      * @return The list of reward speed info
      */
-    function getAllMarketRewardSpeeds() public view returns (MarketRewardSpeed[] memory) {
-        address[] memory allMarkets = ComptrollerInterface(comptroller).getAllMarkets();
-        MarketRewardSpeed[] memory allRewardSpeeds = new MarketRewardSpeed[](allMarkets.length);
-        for (uint i = 0; i < allMarkets.length; i++) {
-            allRewardSpeeds[i] = getMarketRewardSpeeds(allMarkets[i]);
+    function getMultipleMarketRewardSpeeds(address[] memory cTokens) public view returns (MarketRewardSpeed[] memory) {
+        MarketRewardSpeed[] memory allRewardSpeeds = new MarketRewardSpeed[](cTokens.length);
+        for (uint i = 0; i < cTokens.length; i++) {
+            allRewardSpeeds[i] = getMarketRewardSpeeds(cTokens[i]);
         }
         return allRewardSpeeds;
     }
