@@ -393,8 +393,8 @@ describe('LiquidityMining', () => {
       });
     });
 
-    it('getAllMarketRewardSpeeds', async () => {
-      const result = await liquidityMining.getAllMarketRewardSpeeds();
+    it('getMultipleMarketRewardSpeeds', async () => {
+      const result = await liquidityMining.getMultipleMarketRewardSpeeds([cToken.address, cToken2.address]);
       expect(result.length).to.eq(2); // 2 markets
       expect(result[0].cToken).to.eq(cToken.address);
       expect(result[0].rewardSpeeds.length).to.eq(2); // 2 reward tokens
